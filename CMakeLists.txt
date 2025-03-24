@@ -36,10 +36,15 @@ pico_sdk_init()
 # Add executable. Default name is the project name, version 0.1
 
 add_executable(conexao_servidor conexao_servidor.c 
-${CMAKE_CURRENT_LIST_DIR}/lib/pico-ssd1306/ssd1306.c
-${CMAKE_CURRENT_LIST_DIR}/lib/doglab/doglab.c
+    ${CMAKE_CURRENT_LIST_DIR}/lib/pico-ssd1306/ssd1306.c
+    ${CMAKE_CURRENT_LIST_DIR}/lib/doglab/doglab.c
+    ${CMAKE_CURRENT_LIST_DIR}/lib/pico_dht/dht/dht.c
+    # ${CMAKE_CURRENT_LIST_DIR}/lib/pico_dht/dht/dht.pio
 )
 
+add_subdirectory(lib/pico_dht/dht)
+
+pico_generate_pio_header(conexao_servidor ${CMAKE_CURRENT_LIST_DIR}/lib/pico_dht/dht/dht.pio)
 pico_set_program_name(conexao_servidor "conexao_servidor")
 pico_set_program_version(conexao_servidor "0.1")
 
@@ -51,6 +56,7 @@ pico_enable_stdio_usb(conexao_servidor 1)
 target_link_libraries(conexao_servidor
         pico_stdlib
         hardware_adc
+        dht
 )
 
 # Add the standard include files to the build
@@ -58,14 +64,15 @@ target_include_directories(conexao_servidor PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
         ${CMAKE_CURRENT_LIST_DIR}/lib
         ${CMAKE_CURRENT_LIST_DIR}/lib/pico-ssd1306 
-        ${CMAKE_CURRENT_LIST_DIR}/lib/doglab 
+        ${CMAKE_CURRENT_LIST_DIR}/lib/doglab
+        ${CMAKE_CURRENT_LIST_DIR}/lib/pico_dht/dht/include
 )
 
 # Add any user requested libraries
 target_link_libraries(conexao_servidor 
         hardware_i2c
         pico_cyw43_arch_lwip_threadsafe_background
-        )
+)
 
 pico_add_extra_outputs(conexao_servidor)
 

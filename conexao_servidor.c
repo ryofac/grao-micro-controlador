@@ -11,6 +11,7 @@
 #include "lwip/init.h"
 #include "lwip/tcp.h"
 #include "lwip/sockets.h"
+#include "dht.h"
 
 // --- Configurações de Rede ---
 
@@ -19,6 +20,7 @@
 #define WIFI_PASSWORD "lena1708"       // Senha da sua rede Wi-Fi
 #define WIFI_CONNECT_TIMEOUT 30000     // Tempo limite para conexão Wi-Fi (ms)
 
+/// 192.168.15.163/24
 // Endereço IP e porta do servidor HTTP
 #define IP_OCTET_1 192   // Primeiro octeto do IP do servidor
 #define IP_OCTET_2 168   // Segundo octeto do IP do servidor
@@ -31,10 +33,16 @@
 // Canal ADC para o sensor de temperatura interno
 #define TEMP_SENSOR_CHANNEL 4
 
-// Canal ADC e pino para o microfone
-#define MIC_SENSOR_CHANNEL 2
-#define MIC_VREF 1.65f // Tensão de referência do microfone (Volts)
-#define MIC_ADC_PIN 28
+// Dados do sensor de temperatura e umidade
+static const dht_model_t DHT_MODEL = DHT11;
+static const uint DATA_PIN = 16;
+
+#define DHT_PIN 16
+
+// Canal ADC e pino para o gás
+#define GAS_SENSOR_CHANNEL 2
+#define GAS_VREF 1.65f // Tensão de referência do gás (Volts)
+#define GAS_ADC_PIN 28
 
 // Identificador do sensor (usado na requisição HTTP)
 #define SENSOR_ID 1
@@ -48,20 +56,25 @@ bool server_connected = false;
 typedef struct sensors_read
 {
     float temperature; // Temperatura em graus Celsius.
-    float ruid;        // Nível de ruído (variação da tensão em Volts).
+    float gas_level;   // Nível de ruído (variação da tensão em Volts).
+    float moisture;
 } SensorsRead;
 
 // Variável global para armazenar as leituras atuais dos sensores.
 SensorsRead sensors_reading = {
     temperature : 0.0f,
-    ruid : 0.0f
+    gas_level : 0.0f,
+    moisture : 0.0f
 };
 
 // Variáveis do display
 int x_pos_text = 0;
 int y_pos_text = 0;
 int SCREEN_BOTTOM_LIMIT = SCREEN_HEIGHT - 8;
-char *bottom_screen_text = "Console";
+char *bottom_screen_text = "Monitoramento";
+
+// Variáveis do sensor de temperatura
+dht_t dht;
 
 // --- Protótipos de Funções ---
 void clear_display();
@@ -69,8 +82,8 @@ void display_text_with_scale(char *text, int scale);
 void display_text(char *text);
 void draw_screen_botton();
 void draw_screen_components();
-void read_temperature();
-void read_ruid_level();
+void read_temperature_and_moisture();
+void read_gas_level();
 void read_sensors();
 void send_data_to_server();
 int connect_to_wifi();
@@ -162,34 +175,38 @@ err_t tcp_client_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
 }
 
 /**
- * @brief Lê a temperatura do sensor interno do RP2040.
+ * @brief Lê a temperatura do DHT11.
  *
  * Seleciona o canal ADC do sensor, lê o valor bruto, converte para voltagem
  * e, em seguida, para temperatura em graus Celsius usando a fórmula do datasheet.
- * Armazena o resultado na variável global `sensors_reading.temperature`.
+ * Armazena o resultado nas variáveis globais `sensors_reading.temperature` e `sensors_reading.moisture`.
  */
-void read_temperature()
+void read_temperature_and_moisture()
 {
-    adc_select_input(TEMP_SENSOR_CHANNEL);                                // Seleciona o canal do sensor de temperatura
-    uint16_t raw = adc_read();                                            // Lê o valor bruto do ADC
-    const float conversion_factor = 3.3f / (1 << 12);                     // Fator de conversão para 12 bits
-    float voltage = raw * conversion_factor;                              // Converte para voltagem
-    sensors_reading.temperature = 27.0f - (voltage - 0.706f) / 0.001721f; // Converte para Celsius
 
-    char msg[50];
-    sprintf(msg, "Temperatura: %.2f °C\n", sensors_reading.temperature);
-    display_text(msg);
+    dht_start_measurement(&dht);
+
+    float humidity;
+    float temperature_c;
+    dht_result_t result = dht_finish_measurement_blocking(&dht, &humidity, &temperature_c);
+    sensors_reading.temperature = temperature_c;
+    sensors_reading.moisture = humidity;
+
+    if (!result == DHT_RESULT_OK)
+    {
+        display_text("Erro de conexão com o sensor DHT11!");
+    }
 }
 
 /**
- * @brief Lê o nível de ruído do microfone.
+ * @brief Lê o nível de ruído do gás.
  *
- * Seleciona o canal ADC do microfone, lê o valor bruto, faz 10 leituras com um pequeno intervalo, e calcula a média
+ * Seleciona o canal ADC do gás, lê o valor bruto, faz 10 leituras com um pequeno intervalo, e calcula a média
  * subtraindo o valor de tensão de referência (`MIC_VREF`). Armazena o resultado em `sensors_reading.ruid`.
  */
-void read_ruid_level()
+void read_gas_level()
 {
-    adc_select_input(MIC_SENSOR_CHANNEL); // Seleciona o canal do microfone
+    adc_select_input(GAS_SENSOR_CHANNEL); // Seleciona o canal do gás
     uint16_t raw_value = adc_read();      // Lê o valor bruto (uma vez)
 
     float sum = 0;
@@ -202,11 +219,7 @@ void read_ruid_level()
         sleep_ms(10); // Pequeno atraso entre as leituras
     }
 
-    sensors_reading.ruid = (sum / 10.0f) - MIC_VREF; // Calcula a média e subtrai VREF
-
-    char msg[50];
-    sprintf(msg, "Ruido: %.2f \n", sensors_reading.ruid);
-    display_text(msg);
+    sensors_reading.gas_level = (sum / 10.0f) - GAS_VREF; // Calcula a média e subtrai VREF
 }
 
 /**
@@ -215,8 +228,21 @@ void read_ruid_level()
  */
 void read_sensors()
 {
-    read_temperature();
-    read_ruid_level();
+    read_temperature_and_moisture();
+    read_gas_level();
+}
+
+void display_sensor_data()
+{
+    char msg[255];
+    snprintf(msg, sizeof(msg), "Monitoriamento Ativo!");
+    display_text(msg);
+    snprintf(msg, sizeof(msg), "Temperatura: %.2f oC", sensors_reading.temperature);
+    display_text(msg);
+    snprintf(msg, sizeof(msg), "Umidade: %.2f %%", sensors_reading.moisture);
+    display_text(msg);
+    snprintf(msg, sizeof(msg), "Nivel de Gas: %.2f", sensors_reading.gas_level);
+    display_text(msg);
 }
 
 /**
@@ -256,13 +282,18 @@ void send_data_to_server()
         display_text("O servidor está disponível");
         server_connected = true; // Atualiza o status da conexão
     }
+    else
+    {
+        display_text("WARN: Servidor n disponivel");
+    }
 
     // Formata a requisição HTTP GET
     char request[512];
     snprintf(request, sizeof(request),
-             "GET /temp?temperature=%.2f&ruid=%.2f&sensor_id=%d HTTP/1.1\r\nHost: 192.168.15.163\r\n\r\n",
+             "GET /temp?temperature=%.2f&moisture=%.2f&gas_level=%.2f&sensor_id=%d HTTP/1.1\r\nHost: 192.168.15.163\r\n\r\n",
              sensors_reading.temperature,
-             sensors_reading.ruid,
+             sensors_reading.moisture,
+             sensors_reading.gas_level,
              SENSOR_ID);
 
     // Envia a requisição
@@ -355,6 +386,9 @@ int main()
     // Inicializa todos os subsistemas (stdio, ADC, I2C, etc.)
     init_all();
 
+    // Inicializa sensor DHT11
+    dht_init(&dht, DHT_MODEL, pio0, DATA_PIN, true /* enables pull_up */);
+
     // Funções do display
     clear_display();
     connect_to_wifi();
@@ -362,9 +396,11 @@ int main()
     // Loop principal
     while (true)
     {
-        read_sensors();        // Lê os sensores
+
+        read_sensors(); // Lê os sensores
+        display_sensor_data();
         send_data_to_server(); // Envia os dados para o servidor
-        sleep_ms(1000);        // Aguarda 1 segundo
+        sleep_ms(1000);        // Aguarda dois segundos
         clear_display();
     }
 

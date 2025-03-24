@@ -2,7 +2,7 @@
 #include <stdio.h>
 
 #include "doglab.h"
-#include "ssd1306.h"
+	#include "ssd1306.h"
 #include "hardware/adc.h"
 
 // Aloca a variável do display da tela para ser manipulada pelas funções de display
