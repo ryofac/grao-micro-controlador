@@ -1,6 +1,9 @@
 #ifndef DOGLAB_H
 #define DOGLAB_H
 
+#include "hardware/i2c.h"
+#include "ssd1306.h"
+
 // Botões:
 #define BTA 5
 #define BTB 6
@@ -15,9 +18,7 @@
 #define BUZZER_PIN_1 21
 #define BUZZER_PIN_2 10
 
-// Variáveis Display OLED
-#include "hardware/i2c.h"
-#include "ssd1306.h"
+// Display OLED
 extern ssd1306_t display;
 
 #define SCREEN_WIDTH 128

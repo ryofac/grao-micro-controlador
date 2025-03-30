@@ -48,21 +48,6 @@ void init_buzzer()
   gpio_set_dir(BUZZER_PIN_1, GPIO_OUT);
 }
 
-typedef void (*callback_t)(uint gpio, uint32_t events);
-void initButtons(callback_t callbackFunction)
-{
-  if (callbackFunction == NULL)
-    return;
-  int buttons[2] = {BTA, BTB};
-  for (int i = 0; i < 2; i++)
-  {
-    gpio_init(buttons[i]);
-    gpio_set_dir(buttons[i], GPIO_IN);
-    gpio_pull_up(buttons[i]);
-    gpio_set_irq_enabled_with_callback(buttons[i], GPIO_IRQ_EDGE_RISE, true, callbackFunction);
-  }
-}
-
 void init_analog()
 {
   adc_init();
@@ -84,7 +69,6 @@ void init_all()
   stdio_init_all();
   init_i2c();
   init_display();
-  initButtons(0);
   init_leds();
   init_adc();
 }

@@ -34,9 +34,7 @@
 
 // Dados do sensor de temperatura e umidade
 static const dht_model_t DHT_MODEL = DHT11;
-static const uint DATA_PIN = 16;
-
-#define DHT_PIN 16
+static const uint DHT_PIN = 16;
 
 // Canal ADC e pino para o gás
 #define GAS_SENSOR_CHANNEL 2
@@ -240,7 +238,6 @@ void read_sensors()
     read_gas_level();
 }
 
-
 void display_sensor_data()
 {
     char msg[255];
@@ -391,7 +388,7 @@ int main()
     init_all();
 
     // Inicializa sensor DHT11
-    dht_init(&dht, DHT_MODEL, pio0, DATA_PIN, true /* habilita pull_up interno*/);
+    dht_init(&dht, DHT_MODEL, pio0, DHT_PIN, true /* habilita pull_up interno*/);
 
     // Funções do display
     clear_display();
@@ -410,7 +407,7 @@ int main()
         read_sensors(); // Lê os sensores
         display_sensor_data();
         send_data_to_server(pcb); // Envia os dados para o servidor
-        sleep_ms(1000);           // Aguarda um segundo
+        sleep_ms(5000);           // Aguarda cinco segundos
         clear_display();
     }
 
