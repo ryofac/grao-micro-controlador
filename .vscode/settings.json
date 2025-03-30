@@ -44,6 +44,7 @@
     "i2c.h": "c",
     "string.h": "c",
     "doglab.h": "c",
-    "ssd1306.h": "c"
+    "ssd1306.h": "c",
+    "numbers": "c"
   }
 }

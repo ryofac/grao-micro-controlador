@@ -14,7 +14,6 @@
 #include "dht.h"
 
 // --- Configurações de Rede ---
-
 // Credenciais da rede Wi-Fi
 #define WIFI_SSID "FRANCIMAR FAUSTINO" // Nome da sua rede Wi-Fi
 #define WIFI_PASSWORD "lena1708"       // Senha da sua rede Wi-Fi
@@ -22,14 +21,14 @@
 
 /// 192.168.15.163/24
 // Endereço IP e porta do servidor HTTP
-#define IP_OCTET_1 192   // Primeiro octeto do IP do servidor
-#define IP_OCTET_2 168   // Segundo octeto do IP do servidor
-#define IP_OCTET_3 15    // Terceiro octeto do IP do servidor
-#define IP_OCTET_4 163   // Quarto octeto do IP do servidor
+#define IP_OCTET_1 192
+#define IP_OCTET_2 168
+#define IP_OCTET_3 15
+#define IP_OCTET_4 163
+
 #define SERVER_PORT 8000 // Porta do servidor
 
-// --- Configurações dos Sensores ---
-
+// --- Configurações de Sensores ---
 // Canal ADC para o sensor de temperatura interno
 #define TEMP_SENSOR_CHANNEL 4
 
@@ -56,7 +55,7 @@ bool server_connected = false;
 typedef struct sensors_read
 {
     float temperature; // Temperatura em graus Celsius.
-    float gas_level;   // Nível de ruído (variação da tensão em Volts).
+    float gas_level;   // Nível de gás (em porcentagem).
     float moisture;
 } SensorsRead;
 
@@ -67,7 +66,7 @@ SensorsRead sensors_reading = {
     moisture : 0.0f
 };
 
-// Variáveis do display
+// Variáveis do display (posicionamento na tela)
 int x_pos_text = 0;
 int y_pos_text = 0;
 int SCREEN_BOTTOM_LIMIT = SCREEN_HEIGHT - 8;
@@ -167,7 +166,7 @@ err_t tcp_client_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
     }
     else
     {
-        // Recebemos dados (não estamos processando)
+        // Recepção de dados pelo servidor
         tcp_recved(tpcb, p->tot_len);
         pbuf_free(p);
         return ERR_OK;
@@ -183,7 +182,6 @@ err_t tcp_client_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
  */
 void read_temperature_and_moisture()
 {
-
     dht_start_measurement(&dht);
 
     float humidity;
@@ -198,33 +196,43 @@ void read_temperature_and_moisture()
     }
 }
 
-/**
- * @brief Lê o nível de ruído do gás.
- *
- * Seleciona o canal ADC do gás, lê o valor bruto, faz 10 leituras com um pequeno intervalo, e calcula a média
- * subtraindo o valor de tensão de referência (`MIC_VREF`). Armazena o resultado em `sensors_reading.ruid`.
- */
 void read_gas_level()
 {
     adc_select_input(GAS_SENSOR_CHANNEL); // Seleciona o canal do gás
-    uint16_t raw_value = adc_read();      // Lê o valor bruto (uma vez)
 
     float sum = 0;
+    const float conversion_f = 3.3f / (1 << 12); // Conversão do ADC para tensão
+
     // Faz 10 leituras e soma os resultados
     for (int i = 0; i < 10; i++)
     {
-        const float conversion_f = 3.3f / (1 << 12);
-        float voltage = raw_value * conversion_f; // Usa o *mesmo* raw_value
+        float voltage = adc_read() * conversion_f;
         sum += voltage;
         sleep_ms(10); // Pequeno atraso entre as leituras
     }
 
-    sensors_reading.gas_level = (sum / 10.0f) - GAS_VREF; // Calcula a média e subtrai VREF
+    // Calcula a média da tensão lida
+    float avg_voltage = sum / 10.0f;
+
+    // Definição dos valores mínimo e máximo esperados do sensor
+    const float V_MIN = 0.1f; // Tensão mínima esperada
+    const float V_MAX = 3.0f; // Tensão máxima esperada
+
+    // Mapeia a média de tensão para um percentual (0-100%)
+    float percentage = ((avg_voltage - V_MIN) / (V_MAX - V_MIN)) * 100.0f;
+
+    // Garante que o valor fique dentro do intervalo 0-100%
+    if (percentage < 0.0f)
+        percentage = 0.0f;
+    if (percentage > 100.0f)
+        percentage = 100.0f;
+
+    sensors_reading.gas_level = percentage; // Armazena o resultado como percentual
 }
 
 /**
- * @brief Lê ambos os sensores (temperatura e ruído).
- *  Chama as funções `read_temperature` e `read_ruid_level`.
+ * @brief Lê ambos os sensores (temperatura e nível de gás).
+ *  Chama as funções `read_temperature` e `read_gas_level`.
  */
 void read_sensors()
 {
@@ -232,11 +240,11 @@ void read_sensors()
     read_gas_level();
 }
 
+
 void display_sensor_data()
 {
     char msg[255];
-    snprintf(msg, sizeof(msg), "Monitoriamento Ativo!");
-    display_text(msg);
+    display_text("Monitoriamento Ativo!");
     snprintf(msg, sizeof(msg), "Temperatura: %.2f oC", sensors_reading.temperature);
     display_text(msg);
     snprintf(msg, sizeof(msg), "Umidade: %.2f %%", sensors_reading.moisture);
@@ -245,22 +253,25 @@ void display_sensor_data()
     display_text(msg);
 }
 
+struct tcp_pcb *create_tcp_struct()
+{
+    struct tcp_pcb *pcb = tcp_new();
+    if (!pcb)
+    {
+        display_text("Erro ao criar PCB!");
+        return NULL;
+    }
+    return pcb;
+}
+
 /**
  * @brief Envia os dados dos sensores para o servidor HTTP.
  *
  * Cria uma conexão TCP com o servidor, formata uma requisição HTTP GET
  * com os dados de temperatura e ruído e envia a requisição.
  */
-void send_data_to_server()
+void send_data_to_server(struct tcp_pcb *pcb)
 {
-    // Cria um novo PCB (Protocol Control Block) para a conexão TCP
-    struct tcp_pcb *pcb = tcp_new();
-    if (!pcb)
-    {
-        display_text("Pacote perdido :/");
-        return;
-    }
-
     // Define o endereço IP do servidor
     ip_addr_t server_ip;
     IP4_ADDR(&server_ip, IP_OCTET_1, IP_OCTET_2, IP_OCTET_3, IP_OCTET_4);
@@ -276,15 +287,11 @@ void send_data_to_server()
         return;
     }
 
-    // Verifica se a conexão foi estabelecida (opcional)
+    // Verifica se a conexão foi estabelecida
     if (!server_connected)
     {
         display_text("O servidor está disponível");
         server_connected = true; // Atualiza o status da conexão
-    }
-    else
-    {
-        display_text("WARN: Servidor n disponivel");
     }
 
     // Formata a requisição HTTP GET
@@ -314,7 +321,6 @@ void send_data_to_server()
         return;         // Sai
     }
 
-    // Configura a função de callback para receber a resposta (opcional)
     tcp_recv(pcb, tcp_client_recv);
 }
 
@@ -355,7 +361,7 @@ int connect_to_wifi()
 
     cyw43_arch_enable_sta_mode();
 
-    int retries = 20;
+    int retries = 5;
 
     while (retries > 0)
     {
@@ -376,10 +382,8 @@ int connect_to_wifi()
         sleep_ms(500);
         retries -= 1;
     }
-    return -1; // Falha na conexão
+    return -1;
 }
-
-// --- Função Principal (main) ---
 
 int main()
 {
@@ -387,22 +391,28 @@ int main()
     init_all();
 
     // Inicializa sensor DHT11
-    dht_init(&dht, DHT_MODEL, pio0, DATA_PIN, true /* enables pull_up */);
+    dht_init(&dht, DHT_MODEL, pio0, DATA_PIN, true /* habilita pull_up interno*/);
 
     // Funções do display
     clear_display();
-    connect_to_wifi();
 
-    // Loop principal
+    // Inicializando e conectando ao módulo wi-fi
+    if (!connect_to_wifi())
+    {
+        display_text("Conexão mal-sucedida...");
+    }
+
     while (true)
     {
+        // Criando estrutura PCB para conexão TCP
+        struct tcp_pcb *pcb = create_tcp_struct();
 
         read_sensors(); // Lê os sensores
         display_sensor_data();
-        send_data_to_server(); // Envia os dados para o servidor
-        sleep_ms(1000);        // Aguarda dois segundos
+        send_data_to_server(pcb); // Envia os dados para o servidor
+        sleep_ms(1000);           // Aguarda um segundo
         clear_display();
     }
 
-    return 0; // Nunca deve chegar aqui
+    return 0;
 }
